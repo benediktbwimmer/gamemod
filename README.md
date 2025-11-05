@@ -29,11 +29,22 @@ Create `apps/backend/.env` (or export variables) with:
 
 ```dotenv
 PORT=3000
-DATABASE_URL=postgres://user:password@localhost:5432/gamemod
+DATABASE_URL=postgres://gamemod:gamemod@localhost:5544/gamemod
 REDIS_URL=redis://localhost:6379
 ```
 
-Only `PORT` is required for local development today. Database and Redis URLs enable future integrations; when omitted, the backend logs a warning and disables those features.
+`DATABASE_URL` now drives ticket persistence—make sure it points at the Postgres instance started below.
+
+### Database (local)
+
+Spin up Postgres on a non-standard port and run migrations:
+
+```bash
+docker compose up -d postgres
+npm run migrate:up
+```
+
+This provisions Postgres 16 with credentials `gamemod/gamemod` on `localhost:5544` and applies the tickets schema. Shut it down with `docker compose down` when finished.
 
 ### Development Servers
 
@@ -63,6 +74,8 @@ The frontend runs via Vite at `http://localhost:5173` and surfaces API health in
 - `npm run build` – Type-check and build all workspaces.
 - `npm run lint` – Run ESLint across backend and frontend.
 - `npm run format` – Format source files via Prettier.
+- `npm run migrate:up` – Apply database migrations (requires `DATABASE_URL`).
+- `npm run migrate:down` – Roll back the latest migration.
 
 ## Roadmap Notes
 

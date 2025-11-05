@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as d3 from "d3";
+import type { NumberValue } from "d3";
 
 type DataPoint = {
   date: string;
@@ -62,6 +63,8 @@ export function TicketVolumeChart() {
       .attr("stroke-width", 3)
       .attr("d", line);
 
+    const formatDate = d3.timeFormat("%b %d");
+
     svg
       .append("g")
       .attr("transform", `translate(0,${height - margin.bottom})`)
@@ -69,9 +72,13 @@ export function TicketVolumeChart() {
         d3
           .axisBottom(x)
           .ticks(6)
-          .tickFormat((d) =>
-            d3.timeFormat("%b %d")(d instanceof Date ? d : new Date(d))
-          )
+          .tickFormat((domainValue: Date | NumberValue) => {
+            const date =
+              domainValue instanceof Date
+                ? domainValue
+                : new Date(domainValue.valueOf());
+            return formatDate(date);
+          })
       )
       .selectAll("text")
       .attr("fill", "#cbd5f5");

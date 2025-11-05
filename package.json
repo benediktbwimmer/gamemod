@@ -12,6 +12,8 @@
     "dev:frontend": "npm run dev --workspace frontend",
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces",
-    "format": "npm run format --workspaces"
+    "format": "npm run format --workspaces",
+    "migrate:up": "npm run migrate:up --workspace backend",
+    "migrate:down": "npm run migrate:down --workspace backend"
   }
 }

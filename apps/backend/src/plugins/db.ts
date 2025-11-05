@@ -11,10 +11,8 @@ declare module "fastify" {
 
 export default fp(async (fastify) => {
   if (!env.DATABASE_URL) {
-    fastify.log.warn(
-      "DATABASE_URL is not set. Database-dependent features are disabled."
-    );
-    return;
+    fastify.log.error("DATABASE_URL must be configured for database access.");
+    throw fastify.httpErrors.internalServerError("Database configuration missing");
   }
 
   const pool = new Pool({
@@ -28,8 +26,7 @@ export default fp(async (fastify) => {
 
   fastify.decorate("db", pool);
 
-  fastify.addHook("onClose", async (instance, done) => {
+  fastify.addHook("onClose", async (instance) => {
     await instance.db.end();
-    done();
   });
 });
