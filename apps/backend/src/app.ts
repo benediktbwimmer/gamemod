@@ -1,7 +1,7 @@
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import sensible from "@fastify/sensible";
-import Fastify, { FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 
 import { env } from "./env";
 import db from "./plugins/db";
