@@ -1,17 +1,23 @@
+import { useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 
+import { CreateTicketModal } from "./components/CreateTicketModal";
 import { Dashboard } from "./components/Dashboard";
 import { useApiHealth } from "./hooks/useApiHealth";
+import { AdminTopicsPage } from "./pages/AdminTopicsPage";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { TicketsPage } from "./pages/TicketsPage";
 
 const navigation = [
   { to: "/", label: "Overview" },
   { to: "/tickets", label: "Tickets" },
-  { to: "/moderation", label: "Moderation" },
-  { to: "/analytics", label: "Analytics" }
+  { to: "/analytics", label: "Analytics" },
+  { to: "/settings", label: "Settings" }
 ] as const;
 
 export default function App() {
   const { data: health, isFetching } = useApiHealth();
+  const [isCreateTicketOpen, setCreateTicketOpen] = useState(false);
 
   return (
     <div className="grid min-h-screen grid-cols-[240px_1fr] bg-surface text-slate-100">
@@ -29,6 +35,7 @@ export default function App() {
             <NavLink
               key={item.to}
               to={item.to}
+              end={item.to === "/"}
               className={({ isActive }) =>
                 [
                   "rounded-xl px-4 py-2 text-sm transition-colors",
@@ -71,7 +78,10 @@ export default function App() {
               />
               API
             </div>
-            <button className="rounded-full border border-surface-subtle bg-surface-muted/80 px-4 py-2 text-sm text-slate-200 hover:border-primary hover:text-white">
+            <button
+              onClick={() => setCreateTicketOpen(true)}
+              className="rounded-full border border-surface-subtle bg-surface-muted/80 px-4 py-2 text-sm text-slate-200 hover:border-primary hover:text-white"
+            >
               Create Ticket
             </button>
             <div className="flex items-center gap-2">
@@ -87,6 +97,9 @@ export default function App() {
         <div className="flex-1 overflow-y-auto px-6 py-6">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/tickets" element={<TicketsPage />} />
+            <Route path="/analytics" element={<AnalyticsPage />} />
+            <Route path="/settings" element={<AdminTopicsPage />} />
             <Route
               path="*"
               element={
@@ -105,6 +118,11 @@ export default function App() {
           </Routes>
         </div>
       </main>
+
+      <CreateTicketModal
+        isOpen={isCreateTicketOpen}
+        onClose={() => setCreateTicketOpen(false)}
+      />
     </div>
   );
 }

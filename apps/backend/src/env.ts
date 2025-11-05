@@ -8,7 +8,8 @@ const envSchema = z.object({
     .default("development"),
   PORT: z.coerce.number().int().min(0).default(3000),
   DATABASE_URL: z.string().url().optional(),
-  REDIS_URL: z.string().url().optional()
+  REDIS_URL: z.string().url().optional(),
+  ADMIN_PASSWORD: z.string().min(8).optional()
 });
 
 export const env = envSchema.parse(process.env);

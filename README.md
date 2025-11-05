@@ -31,6 +31,7 @@ Create `apps/backend/.env` (or export variables) with:
 PORT=3000
 DATABASE_URL=postgres://gamemod:gamemod@localhost:5544/gamemod
 REDIS_URL=redis://localhost:6379
+ADMIN_PASSWORD=changeme123
 ```
 
 `DATABASE_URL` now drives ticket persistence—make sure it points at the Postgres instance started below.
