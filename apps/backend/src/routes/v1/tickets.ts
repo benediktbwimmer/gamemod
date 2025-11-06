@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { FieldValue, Timestamp } from "@google-cloud/firestore";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -36,82 +37,121 @@ const ticketIdParamsSchema = z.object({
   id: z.string().uuid("Ticket id must be a UUID")
 });
 
-type TicketRow = {
-  id: string;
-  organization_id: string | null;
+type TicketDoc = {
+  organizationId?: string | null;
   title: string;
   body: string;
-  player_id: string;
+  playerId: string;
   status: TicketStatus;
-  created_at: Date | string;
-  updated_at: Date | string;
-  topic_id: string | null;
-  topic_name: string | null;
+  topicId?: string | null;
+  createdAt?: Timestamp | Date | string | null;
+  updatedAt?: Timestamp | Date | string | null;
 };
 
-type TopicRow = {
-  id: string;
-  name: string;
-  description: string | null;
-};
-
-type TicketMessageRow = {
-  id: string;
-  ticket_id: string;
-  author_type: "agent" | "player";
+type TicketMessageDoc = {
+  authorType: "agent" | "player";
   body: string;
-  created_at: Date | string;
+  createdAt?: Timestamp | Date | string | null;
 };
 
-function mapTicket(row: TicketRow) {
+type TopicDoc = {
+  name: string;
+};
+
+function toIsoDate(value?: Timestamp | Date | string | null) {
+  if (!value) {
+    return new Date().toISOString();
+  }
+
+  if (value instanceof Timestamp) {
+    return value.toDate().toISOString();
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return new Date().toISOString();
+    }
+    return parsed.toISOString();
+  }
+
+  return new Date().toISOString();
+}
+
+function mapTicket(
+  id: string,
+  data: TicketDoc,
+  topic?: { id: string; name: string }
+) {
+  const status = TICKET_STATUSES.includes(data.status)
+    ? data.status
+    : "open";
   return {
-    id: row.id,
-    organizationId: row.organization_id,
-    title: row.title,
-    body: row.body,
-    playerId: row.player_id,
-    status: row.status,
-    createdAt: new Date(row.created_at).toISOString(),
-    updatedAt: new Date(row.updated_at).toISOString(),
-    topic: row.topic_id
-      ? {
-          id: row.topic_id,
-          name: row.topic_name ?? "Unknown topic"
-        }
-      : null
+    id,
+    organizationId: data.organizationId ?? null,
+    title: data.title,
+    body: data.body,
+    playerId: data.playerId,
+    status,
+    createdAt: toIsoDate(data.createdAt),
+    updatedAt: toIsoDate(data.updatedAt),
+    topic: topic ?? null
   } as const;
 }
 
-function mapTicketMessage(row: TicketMessageRow) {
+function mapTicketMessage(id: string, data: TicketMessageDoc, ticketId: string) {
   return {
-    id: row.id,
-    ticketId: row.ticket_id,
-    authorType: row.author_type,
-    body: row.body,
-    createdAt: new Date(row.created_at).toISOString()
+    id,
+    ticketId,
+    authorType: data.authorType,
+    body: data.body,
+    createdAt: toIsoDate(data.createdAt)
   } as const;
 }
 
 export async function registerTicketRoutes(app: FastifyInstance) {
   app.get("/tickets", async () => {
-    const { rows } = await app.db.query<TicketRow>(
-      `SELECT
-         t.id,
-         t.organization_id,
-         t.title,
-         t.body,
-         t.player_id,
-         t.status,
-         t.created_at,
-         t.updated_at,
-         t.topic_id,
-         tt.name AS topic_name
-       FROM tickets t
-       LEFT JOIN ticket_topics tt ON tt.id = t.topic_id
-       ORDER BY t.created_at DESC`
-    );
+    const snapshot = await app.firestore
+      .collection("tickets")
+      .orderBy("createdAt", "desc")
+      .get();
 
-    return { tickets: rows.map(mapTicket) };
+    const topicIds = new Set<string>();
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data() as TicketDoc;
+      if (data.topicId) {
+        topicIds.add(data.topicId);
+      }
+    });
+
+    const topicsMap = new Map<string, { id: string; name: string }>();
+    if (topicIds.size > 0) {
+      const topicDocs = await Promise.all(
+        [...topicIds].map((topicId) =>
+          app.firestore.collection("topics").doc(topicId).get()
+        )
+      );
+
+      topicDocs.forEach((topicDoc) => {
+        if (!topicDoc.exists) {
+          return;
+        }
+        const data = topicDoc.data() as TopicDoc;
+        topicsMap.set(topicDoc.id, { id: topicDoc.id, name: data.name });
+      });
+    }
+
+    const tickets = snapshot.docs.map((doc) => {
+      const data = doc.data() as TicketDoc;
+      const topic = data.topicId ? topicsMap.get(data.topicId) ?? null : null;
+      return mapTicket(doc.id, data, topic ?? undefined);
+    });
+
+    return { tickets };
   });
 
   app.post("/tickets", async (request, reply) => {
@@ -124,28 +164,32 @@ export async function registerTicketRoutes(app: FastifyInstance) {
     const ticketId = randomUUID();
     const { title, body, playerId, topicId, organizationId } = parsed.data;
 
-    const topicResult = await app.db.query<TopicRow>(
-      `SELECT id, name, description
-       FROM ticket_topics
-       WHERE id = $1
-       LIMIT 1`,
-      [topicId]
-    );
+    const topicDoc = await app.firestore.collection("topics").doc(topicId).get();
 
-    if (topicResult.rows.length === 0) {
+    if (!topicDoc.exists) {
       throw app.httpErrors.badRequest("Topic not found");
     }
 
     try {
-      const { rows } = await app.db.query<TicketRow>(
-        `INSERT INTO tickets (id, organization_id, title, body, player_id, topic_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, organization_id, title, body, player_id, status, created_at, updated_at, topic_id,
-           (SELECT name FROM ticket_topics WHERE id = $6) AS topic_name`,
-        [ticketId, organizationId ?? null, title, body, playerId, topicId]
-      );
+      const ticketRef = app.firestore.collection("tickets").doc(ticketId);
 
-      const ticket = mapTicket(rows[0]);
+      await ticketRef.set({
+        organizationId: organizationId ?? null,
+        title,
+        body,
+        playerId,
+        status: "open" as TicketStatus,
+        topicId,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      });
+
+      const snapshot = await ticketRef.get();
+      const topicData = topicDoc.data() as TopicDoc;
+      const ticket = mapTicket(snapshot.id, snapshot.data() as TicketDoc, {
+        id: topicDoc.id,
+        name: topicData.name
+      });
 
       void reply.code(201);
       return { ticket };
@@ -163,30 +207,27 @@ export async function registerTicketRoutes(app: FastifyInstance) {
     }
 
     try {
-      const { rows: mappedRows } = await app.db.query<TicketRow>(
-        `SELECT
-           t.id,
-           t.organization_id,
-           t.title,
-           t.body,
-           t.player_id,
-           t.status,
-           t.created_at,
-           t.updated_at,
-           t.topic_id,
-           tt.name AS topic_name
-         FROM tickets t
-         LEFT JOIN ticket_topics tt ON tt.id = t.topic_id
-         WHERE t.id = $1
-         LIMIT 1`,
-        [parsed.data.id]
-      );
+      const ticketRef = app.firestore.collection("tickets").doc(parsed.data.id);
+      const snapshot = await ticketRef.get();
 
-      if (mappedRows.length === 0) {
+      if (!snapshot.exists) {
         throw app.httpErrors.notFound("Ticket not found");
       }
 
-      return { ticket: mapTicket(mappedRows[0]) };
+      const data = snapshot.data() as TicketDoc;
+      let topic: { id: string; name: string } | undefined;
+      if (data.topicId) {
+        const topicDoc = await app.firestore
+          .collection("topics")
+          .doc(data.topicId)
+          .get();
+        if (topicDoc.exists) {
+          const topicData = topicDoc.data() as TopicDoc;
+          topic = { id: topicDoc.id, name: topicData.name };
+        }
+      }
+
+      return { ticket: mapTicket(snapshot.id, data, topic) };
     } catch (error) {
       if (
         error instanceof Error &&
@@ -217,72 +258,59 @@ export async function registerTicketRoutes(app: FastifyInstance) {
     const updates = body.data;
 
     if (updates.topicId) {
-      const { rows } = await app.db.query<TopicRow>(
-        `SELECT id FROM ticket_topics WHERE id = $1 LIMIT 1`,
-        [updates.topicId]
-      );
-      if (rows.length === 0) {
+      const topicDoc = await app.firestore
+        .collection("topics")
+        .doc(updates.topicId)
+        .get();
+      if (!topicDoc.exists) {
         throw app.httpErrors.badRequest("Topic not found");
       }
     }
 
-    const fields: string[] = [];
-    const values: unknown[] = [];
-    let index = 1;
-
-    if (updates.title) {
-      fields.push(`title = $${index++}`);
-      values.push(updates.title);
-    }
-
-    if (updates.body) {
-      fields.push(`body = $${index++}`);
-      values.push(updates.body);
-    }
-
-    if (updates.status) {
-      fields.push(`status = $${index++}`);
-      values.push(updates.status);
-    }
-
-    if (updates.topicId) {
-      fields.push(`topic_id = $${index++}`);
-      values.push(updates.topicId);
-    }
-
-    if (updates.organizationId) {
-      fields.push(`organization_id = $${index++}`);
-      values.push(updates.organizationId);
-    }
-
-    fields.push(`updated_at = NOW()`);
-
-    values.push(params.data.id);
-
     try {
-      const { rows } = await app.db.query<TicketRow>(
-        `UPDATE tickets
-         SET ${fields.join(", ")}
-         WHERE id = $${index}
-         RETURNING
-           id,
-           organization_id,
-           title,
-           body,
-           player_id,
-           status,
-           created_at,
-           updated_at,
-           topic_id,
-           (SELECT name FROM ticket_topics WHERE id = topic_id) AS topic_name`,
-        values
-      );
+      const ticketRef = app.firestore.collection("tickets").doc(params.data.id);
+      const snapshot = await ticketRef.get();
 
-      if (rows.length === 0) {
+      if (!snapshot.exists) {
         throw app.httpErrors.notFound("Ticket not found");
       }
 
-      return { ticket: mapTicket(rows[0]) };
+      const updateData: Record<string, unknown> = {};
+      if (updates.title) {
+        updateData.title = updates.title;
+      }
+      if (updates.body) {
+        updateData.body = updates.body;
+      }
+      if (updates.status) {
+        updateData.status = updates.status;
+      }
+      if (updates.topicId) {
+        updateData.topicId = updates.topicId;
+      }
+      if (updates.organizationId) {
+        updateData.organizationId = updates.organizationId;
+      }
+
+      updateData.updatedAt = FieldValue.serverTimestamp();
+
+      await ticketRef.update(updateData);
+
+      const refreshed = await ticketRef.get();
+      const data = refreshed.data() as TicketDoc;
+      let topic: { id: string; name: string } | undefined;
+      if (data.topicId) {
+        const topicDoc = await app.firestore
+          .collection("topics")
+          .doc(data.topicId)
+          .get();
+        if (topicDoc.exists) {
+          const topicData = topicDoc.data() as TopicDoc;
+          topic = { id: topicDoc.id, name: topicData.name };
+        }
+      }
+
+      return { ticket: mapTicket(refreshed.id, data, topic) };
     } catch (error) {
       if (
         error instanceof Error &&
@@ -307,64 +335,61 @@ export async function registerTicketRoutes(app: FastifyInstance) {
     const parsed = querySchema.parse(request.query);
     const { days } = parsed;
 
-    const { rows } = await app.db.query<{
-      day: string | Date;
-      status: TicketStatus;
-      count: string;
-    }>(
-      `WITH bounds AS (
-         SELECT
-           (date_trunc('day', NOW()) - ($1::int - 1) * INTERVAL '1 day')::date AS start_day,
-           date_trunc('day', NOW())::date AS end_day
-       ),
-       days AS (
-         SELECT generate_series(start_day, end_day, '1 day') AS day
-         FROM bounds
-       ),
-       statuses AS (
-         SELECT unnest($2::text[])::text AS status
-       ),
-       aggregated AS (
-         SELECT
-           date_trunc('day', created_at)::date AS day,
-           status,
-           COUNT(*) AS count
-         FROM tickets
-         WHERE created_at >= (SELECT start_day FROM bounds)
-         GROUP BY day, status
-       )
-       SELECT
-         d.day,
-         s.status,
-         COALESCE(a.count, 0) AS count
-       FROM days d
-       CROSS JOIN statuses s
-       LEFT JOIN aggregated a ON a.day = d.day AND a.status = s.status
-       ORDER BY d.day ASC, s.status ASC`,
-      [days, TICKET_STATUSES]
+    const now = new Date();
+    const end = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        0,
+        0,
+        0,
+        0
+      )
     );
+    const start = new Date(end);
+    start.setUTCDate(end.getUTCDate() - (days - 1));
 
-    const data = rows.reduce<Record<string, Record<TicketStatus, number>>>(
-      (acc, row) => {
-        const dayKey =
-          row.day instanceof Date
-            ? row.day.toISOString().slice(0, 10)
-          : row.day.slice(0, 10);
-        if (!acc[dayKey]) {
-          acc[dayKey] = Object.fromEntries(
-            TICKET_STATUSES.map((status) => [status, 0])
-          ) as Record<TicketStatus, number>;
-        }
+    const snapshot = await app.firestore
+      .collection("tickets")
+      .where("createdAt", ">=", Timestamp.fromDate(start))
+      .get();
 
-        acc[dayKey][row.status] = Number(row.count);
-        return acc;
-      },
-      {}
-    );
+    const buckets = new Map<string, Record<TicketStatus, number>>();
+    const dayKeys: string[] = [];
 
-    const series = Object.entries(data).map(([day, statuses]) => ({
-      date: day,
-      statuses
+    for (let i = 0; i < days; i += 1) {
+      const day = new Date(start);
+      day.setUTCDate(start.getUTCDate() + i);
+      const key = day.toISOString().slice(0, 10);
+      dayKeys.push(key);
+      buckets.set(
+        key,
+        Object.fromEntries(
+          TICKET_STATUSES.map((status) => [status, 0])
+        ) as Record<TicketStatus, number>
+      );
+    }
+
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data() as TicketDoc;
+      const createdKey = toIsoDate(data.createdAt).slice(0, 10);
+      const bucket = buckets.get(createdKey);
+      if (!bucket) {
+        return;
+      }
+      const status = TICKET_STATUSES.includes(data.status)
+        ? data.status
+        : undefined;
+      if (!status) {
+        return;
+      }
+      bucket[status] += 1;
+    });
+
+    const series = dayKeys.map((key) => ({
+      date: key,
+      statuses: buckets.get(key)!
     }));
 
     return {
@@ -380,16 +405,22 @@ export async function registerTicketRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest(params.error.message);
     }
 
-    const { rows } = await app.db.query<TicketMessageRow>(
-      `SELECT id, ticket_id, author_type, body, created_at
-       FROM ticket_messages
-       WHERE ticket_id = $1
-       ORDER BY created_at ASC`,
-      [params.data.id]
-    );
+    const ticketRef = app.firestore.collection("tickets").doc(params.data.id);
+    const ticketDoc = await ticketRef.get();
+
+    if (!ticketDoc.exists) {
+      throw app.httpErrors.notFound("Ticket not found");
+    }
+
+    const messagesSnapshot = await ticketRef
+      .collection("messages")
+      .orderBy("createdAt", "asc")
+      .get();
 
     return {
-      messages: rows.map(mapTicketMessage)
+      messages: messagesSnapshot.docs.map((doc) =>
+        mapTicketMessage(doc.id, doc.data() as TicketMessageDoc, params.data.id)
+      )
     };
   });
 
@@ -407,35 +438,37 @@ export async function registerTicketRoutes(app: FastifyInstance) {
     }
 
     const ticketId = params.data.id;
+    const ticketRef = app.firestore.collection("tickets").doc(ticketId);
+    const snapshot = await ticketRef.get();
 
-    const {
-      rows: ticketRows
-    } = await app.db.query<{ id: string }>(
-      `SELECT id FROM tickets WHERE id = $1 LIMIT 1`,
-      [ticketId]
-    );
-
-    if (ticketRows.length === 0) {
+    if (!snapshot.exists) {
       throw app.httpErrors.notFound("Ticket not found");
     }
 
     const { body, authorType } = payload.data;
 
     try {
-      const { rows } = await app.db.query<TicketMessageRow>(
-        `INSERT INTO ticket_messages (ticket_id, author_type, body)
-         VALUES ($1, $2, $3)
-         RETURNING id, ticket_id, author_type, body, created_at`,
-        [ticketId, authorType, body]
-      );
+      const messagesCollection = ticketRef.collection("messages");
+      const messageRef = await messagesCollection.add({
+        authorType,
+        body,
+        createdAt: FieldValue.serverTimestamp()
+      });
 
-      await app.db.query(
-        `UPDATE tickets SET updated_at = NOW() WHERE id = $1`,
-        [ticketId]
-      );
+      await ticketRef.update({
+        updatedAt: FieldValue.serverTimestamp()
+      });
+
+      const messageSnapshot = await messageRef.get();
 
       void reply.code(201);
-      return { message: mapTicketMessage(rows[0]) };
+      return {
+        message: mapTicketMessage(
+          messageSnapshot.id,
+          messageSnapshot.data() as TicketMessageDoc,
+          ticketId
+        )
+      };
     } catch (error) {
       request.log.error({ err: error }, "Failed to create ticket message");
       throw app.httpErrors.internalServerError("Unable to create ticket message");

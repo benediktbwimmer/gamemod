@@ -5,11 +5,23 @@
 :root {
   color-scheme: dark;
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --color-primary: 99 102 241;
+  --color-primary-foreground: 255 255 255;
+  --color-surface: 16 18 37;
+  --color-surface-muted: 27 30 59;
+  --color-surface-subtle: 42 46 92;
+  --bg-accent-1: #1f2353;
+  --bg-accent-2: #2f347a;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background-image: radial-gradient(circle at 20% 20%, #1f2353, transparent),
-    radial-gradient(circle at 80% 0%, #2f347a, transparent);
+  background-image: radial-gradient(
+      circle at 20% 20%,
+      var(--bg-accent-1),
+      transparent
+    ),
+    radial-gradient(circle at 80% 0%, var(--bg-accent-2), transparent);
+  transition: background 0.3s ease;
 }

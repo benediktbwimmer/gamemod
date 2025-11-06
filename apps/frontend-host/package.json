@@ -1,0 +1,12 @@
+{
+  "name": "frontend-host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static frontend host for GameMod",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

@@ -1,3 +1,4 @@
+import { FieldValue, Timestamp } from "@google-cloud/firestore";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -8,33 +9,65 @@ const createTopicSchema = z.object({
   description: z.string().max(256).optional()
 });
 
-type TopicRow = {
-  id: string;
-  name: string;
-  description: string | null;
-  created_at: Date | string;
-  updated_at: Date | string;
+type TopicDoc = {
+  name?: string;
+  nameLower?: string;
+  description?: string | null;
+  createdAt?: Timestamp | Date | string | null;
+  updatedAt?: Timestamp | Date | string | null;
 };
 
-function mapTopic(row: TopicRow) {
+function toIsoDate(value?: Timestamp | Date | string | null) {
+  if (!value) {
+    return new Date().toISOString();
+  }
+
+  if (value instanceof Timestamp) {
+    return value.toDate().toISOString();
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return new Date().toISOString();
+    }
+    return parsed.toISOString();
+  }
+
+  return new Date().toISOString();
+}
+
+function mapTopic(
+  topicId: string,
+  data: TopicDoc
+) {
+  const name = data.name ?? "Untitled Topic";
   return {
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    createdAt: new Date(row.created_at).toISOString(),
-    updatedAt: new Date(row.updated_at).toISOString()
+    id: topicId,
+    name,
+    description: data.description ?? null,
+    createdAt: toIsoDate(data.createdAt),
+    updatedAt: toIsoDate(data.updatedAt)
   } as const;
 }
 
 export async function registerTopicRoutes(app: FastifyInstance) {
   app.get("/topics", async () => {
-    const { rows } = await app.db.query<TopicRow>(
-      `SELECT id, name, description, created_at, updated_at
-       FROM ticket_topics
-       ORDER BY name ASC`
-    );
+    const snapshot = await app.firestore
+      .collection("topics")
+      .orderBy("name")
+      .get();
 
-    return { topics: rows.map(mapTopic) };
+    const topics = snapshot.docs.map((doc) => {
+      const data = doc.data() as TopicDoc;
+      return mapTopic(doc.id, data);
+    });
+
+    return { topics };
   });
 
   app.post("/topics", async (request, reply) => {
@@ -62,26 +95,36 @@ export async function registerTopicRoutes(app: FastifyInstance) {
     }
 
     const { name, description } = parsed.data;
+    const trimmedName = name.trim();
 
     try {
-      const { rows } = await app.db.query<TopicRow>(
-        `INSERT INTO ticket_topics (name, description)
-         VALUES ($1, $2)
-         RETURNING id, name, description, created_at, updated_at`,
-        [name.trim(), description ?? null]
-      );
+      const existing = await app.firestore
+        .collection("topics")
+        .where("nameLower", "==", trimmedName.toLowerCase())
+        .limit(1)
+        .get();
 
-      void reply.code(201);
-      return { topic: mapTopic(rows[0]) };
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        "code" in error &&
-        (error as { code: string }).code === "23505"
-      ) {
+      if (!existing.empty) {
         throw app.httpErrors.conflict("Topic already exists");
       }
 
+      const docRef = app.firestore.collection("topics").doc();
+
+      await docRef.set({
+        name: trimmedName,
+        nameLower: trimmedName.toLowerCase(),
+        description: description ?? null,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      });
+
+      const snapshot = await docRef.get();
+
+      void reply.code(201);
+      return {
+        topic: mapTopic(snapshot.id, snapshot.data() as TopicDoc)
+      };
+    } catch (error) {
       request.log.error({ err: error }, "Failed to create topic");
       throw app.httpErrors.internalServerError("Unable to create topic");
     }

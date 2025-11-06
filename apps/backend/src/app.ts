@@ -4,7 +4,7 @@ import sensible from "@fastify/sensible";
 import Fastify, { type FastifyInstance } from "fastify";
 
 import { env } from "./env";
-import db from "./plugins/db";
+import firestore from "./plugins/firestore";
 import { registerRoutes } from "./routes";
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -30,7 +30,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     credentials: true
   });
   await app.register(sensible);
-  await app.register(db);
+  await app.register(firestore);
 
   await registerRoutes(app);
 
