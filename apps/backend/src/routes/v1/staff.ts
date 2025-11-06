@@ -1,5 +1,5 @@
-import type { FastifyInstance } from "fastify";
 import { FieldValue } from "@google-cloud/firestore";
+import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { env } from "../../env";

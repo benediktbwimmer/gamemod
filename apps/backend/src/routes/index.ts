@@ -1,9 +1,9 @@
 import type { FastifyInstance } from "fastify";
 
 import { registerHealthRoutes } from "./health";
+import { registerStaffRoutes } from "./v1/staff";
 import { registerTicketRoutes } from "./v1/tickets";
 import { registerTopicRoutes } from "./v1/topics";
-import { registerStaffRoutes } from "./v1/staff";
 
 export async function registerRoutes(app: FastifyInstance) {
   await registerHealthRoutes(app);

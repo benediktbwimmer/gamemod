@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import type { FastifyInstance } from "fastify";
 import { FieldValue, Timestamp } from "@google-cloud/firestore";
+import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 const TICKET_STATUSES = ["open", "in_progress", "resolved", "closed"] as const;
