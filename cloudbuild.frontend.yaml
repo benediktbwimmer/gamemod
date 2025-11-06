@@ -1,0 +1,20 @@
+substitutions:
+  _API_URL: https://gamemod-api-904841096457.us-central1.run.app
+steps:
+  - name: gcr.io/cloud-builders/npm
+    args: ["install"]
+  - name: gcr.io/cloud-builders/npm
+    entrypoint: bash
+    args:
+      - "-c"
+      - "VITE_API_BASE_URL=${_API_URL} npm run build --workspace frontend"
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - apps/frontend-host/Dockerfile
+      - -t
+      - us-central1-docker.pkg.dev/${PROJECT_ID}/gamemod-web/frontend:latest
+      - .
+images:
+  - us-central1-docker.pkg.dev/${PROJECT_ID}/gamemod-web/frontend:latest

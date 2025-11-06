@@ -95,7 +95,7 @@ The production topology targets:
 
 - **Backend/API** → Cloud Run (container built from `apps/backend/Dockerfile`)
 - **Data Store** → Firestore (Native mode)
-- **Frontend** → Google Cloud Storage + Cloud CDN (static build produced by Vite)
+- **Frontend** → Cloud Run (Express host serving the Vite build)
 
 ### 1. Prerequisites
 
@@ -167,61 +167,41 @@ gcloud run deploy "$SERVICE_NAME" \
 
 Cloud Run supplies the `PORT` environment variable automatically; the Fastify app listens on it.
 
-### 5. Deploy the frontend to Cloud Storage + Cloud CDN
+### 5. Deploy the frontend host service
 
-1. Create `apps/frontend/.env.production` (or set the variable inline) so Vite embeds the Cloud Run URL:
-
-   ```dotenv
-   VITE_API_BASE_URL=https://YOUR_CLOUD_RUN_URL
-   ```
-
-2. Build the frontend:
+1. Build the Vite bundle so the hosting image can serve it:
 
    ```bash
-   npm run build --workspace frontend
+   VITE_API_BASE_URL=https://YOUR_BACKEND_RUN_URL npm run build --workspace frontend
    ```
 
-3. Upload the static assets to a storage bucket and make them publicly readable (or serve through Cloud CDN with an HTTPS load balancer):
+2. Trigger the Cloud Build pipeline that packages the Express host and uploads the container image (override `_API_URL` if your backend runs elsewhere):
 
    ```bash
-   export WEB_BUCKET=gs://gamemod-web-$PROJECT_ID
-   gsutil mb -l "$REGION" "$WEB_BUCKET"
-   gsutil -m rsync -r apps/frontend/dist "$WEB_BUCKET"
-   gsutil iam ch allUsers:objectViewer "$WEB_BUCKET"
+   gcloud builds submit . \
+     --config cloudbuild.frontend.yaml \
+     --substitutions=_API_URL=https://YOUR_BACKEND_RUN_URL
    ```
 
-4. To front the bucket with Cloud CDN, create a backend bucket and global HTTP(S) load balancer:
+3. Deploy the image to Cloud Run (update the service name if you prefer a different identifier):
 
    ```bash
-   gcloud compute backend-buckets create gamemod-frontend-bucket \
-     --gcs-bucket-name="$WEB_BUCKET" \
-     --enable-cdn
-
-   gcloud compute url-maps create gamemod-frontend-map \
-     --default-backend-bucket=gamemod-frontend-bucket
-
-   gcloud compute target-http-proxies create gamemod-frontend-proxy \
-     --url-map=gamemod-frontend-map
-
-   gcloud compute forwarding-rules create gamemod-frontend-forwarding-rule \
-     --global \
-     --target-http-proxy=gamemod-frontend-proxy \
-     --ports=80
-
-   gcloud compute forwarding-rules describe gamemod-frontend-forwarding-rule \
-     --global \
-     --format="value(IPAddress)"
+   gcloud run deploy gamemod-frontend \
+     --image us-central1-docker.pkg.dev/${PROJECT_ID}/gamemod-web/frontend:latest \
+     --region "$REGION" \
+     --platform managed \
+     --allow-unauthenticated
    ```
 
-   Map your domain’s A record to the returned IP address or use it directly for testing. For HTTPS, provision a certificate and swap to a target HTTPS proxy.
+   The service responds to SPA routes and always falls back to `index.html`. The default URL looks like `https://gamemod-frontend-<PROJECT_NUMBER>.us-central1.run.app/#/staff`. Map a custom domain via Cloud Run if desired.
 
 ### 6. Restrict API access (optional)
 
-The backend enables CORS for all origins by default. To scope it down to your Cloud Storage site or custom domains, adjust the configuration in `apps/backend/src/app.ts`.
+The backend enables CORS for all origins by default. To scope it down to your Cloud Run frontend host or custom domains, adjust the configuration in `apps/backend/src/app.ts`.
 
 ---
 
-Once deployed, the Cloud Run service exposes the API over HTTPS, Firestore stores application data, and Cloud Storage serves the static frontend. Use Cloud Run revisions for rollbacks and Cloud Logging/Trace for observability.
+Once deployed, Cloud Run serves both the API and the static frontend, and Firestore stores application data. Use Cloud Run revisions for rollbacks and Cloud Logging/Trace for observability.
 
 ## Roadmap Notes
 

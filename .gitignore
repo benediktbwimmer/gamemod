@@ -8,5 +8,6 @@ apps/backend/node_modules/
 apps/backend/dist/
 apps/frontend/node_modules/
 apps/frontend/dist/
+apps/frontend-host/node_modules/
 .data/
 *.log
