@@ -88,13 +88,32 @@ export async function registerTopicRoutes(app: FastifyInstance) {
       throw app.httpErrors.unauthorized("Admin credentials required");
     }
 
-    const parsed = createTopicSchema.safeParse(request.body);
+    const rawBody = request.body ?? {};
+    let normalizedBody: unknown = rawBody;
 
-    if (!parsed.success) {
-      throw app.httpErrors.badRequest(parsed.error.message);
+    if (typeof rawBody === "string" || Buffer.isBuffer(rawBody)) {
+      const textBody = Buffer.isBuffer(rawBody)
+        ? rawBody.toString("utf8")
+        : (rawBody as string);
+      try {
+        normalizedBody = textBody.length ? JSON.parse(textBody) : {};
+      } catch (error) {
+        request.log.warn({ error }, "Invalid JSON body for topic creation.");
+        throw app.httpErrors.badRequest("Malformed JSON payload.");
+      }
     }
 
-    const { name, description } = parsed.data;
+    const parsedResult = createTopicSchema.safeParse(normalizedBody);
+
+    if (!parsedResult.success) {
+      request.log.warn(
+        { issues: parsedResult.error.issues },
+        "Validation failed for topic creation."
+      );
+      throw app.httpErrors.badRequest("Invalid topic payload.");
+    }
+
+    const { name, description } = parsedResult.data;
     const trimmedName = name.trim();
 
     try {
@@ -125,6 +144,9 @@ export async function registerTopicRoutes(app: FastifyInstance) {
         topic: mapTopic(snapshot.id, snapshot.data() as TopicDoc)
       };
     } catch (error) {
+      if (error && typeof error === "object" && "statusCode" in error) {
+        throw error;
+      }
       request.log.error({ err: error }, "Failed to create topic");
       throw app.httpErrors.internalServerError("Unable to create topic");
     }

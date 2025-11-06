@@ -8,7 +8,7 @@ import { useStaffSettingsQuery } from "./hooks/useStaffSettings";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { StaffPanelPage } from "./pages/StaffPanelPage";
 import { TicketsPage } from "./pages/TicketsPage";
-import { useStaffAuth } from "./lib/staffAuth";
+import { useStaffAuth, type StaffRole } from "./lib/staffAuth";
 import { defaultStaffSiteSettings } from "./lib/staffSettings";
 import { applyTheme } from "./lib/theme";
 
@@ -16,15 +16,68 @@ type NavItem = {
   to: string;
   label: string;
   requiresAuth?: boolean;
+  end?: boolean;
+  allowedRoles?: StaffRole[];
 };
 
-const navigation: NavItem[] = [{ to: "/staff", label: "Staff Login" }];
+const navigation: NavItem[] = [
+  {
+    to: "/overview",
+    label: "Overview",
+    requiresAuth: true,
+    allowedRoles: ["owner"],
+    end: true
+  },
+  {
+    to: "/tickets",
+    label: "Tickets",
+    requiresAuth: true,
+    allowedRoles: ["owner", "moderator"]
+  },
+  {
+    to: "/analytics",
+    label: "Analytics",
+    requiresAuth: true,
+    allowedRoles: ["owner"]
+  },
+  { to: "/staff", label: "Staff Tools", end: true }
+];
 
 export default function App() {
   const { data: health, isFetching } = useApiHealth();
   const [isCreateTicketOpen, setCreateTicketOpen] = useState(false);
-  const { isAuthenticated } = useStaffAuth();
+  const { isAuthenticated, role, username } = useStaffAuth();
   const settingsQuery = useStaffSettingsQuery();
+  const landingRoute = useMemo(() => {
+    if (!isAuthenticated) {
+      return "/staff";
+    }
+
+    if (role === "moderator") {
+      return "/tickets";
+    }
+
+    return "/overview";
+  }, [isAuthenticated, role]);
+  const visibleNavigation = useMemo(
+    () =>
+      navigation.filter((item) => {
+        if (item.requiresAuth && !isAuthenticated) {
+          return false;
+        }
+
+        if (item.allowedRoles) {
+          if (!role) {
+            return false;
+          }
+
+          return item.allowedRoles.includes(role);
+        }
+
+        return true;
+      }),
+    [isAuthenticated, role]
+  );
 
   const siteSettings = useMemo(
     () => settingsQuery.data?.site ?? defaultStaffSiteSettings,
@@ -65,17 +118,15 @@ export default function App() {
           </h1>
         </div>
         <nav className="flex flex-col gap-2">
-          {navigation.map((item) => (
+          {visibleNavigation.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
-              end={item.to === "/overview" || item.to === "/staff"}
+              end={Boolean(item.end)}
               className={({ isActive }) =>
                 [
                   "rounded-xl px-4 py-2 text-sm transition-colors",
-                  item.requiresAuth && !isAuthenticated
-                    ? "pointer-events-none opacity-30"
-                    : isActive
+                  isActive
                     ? "bg-primary/20 text-white"
                     : "text-slate-400 hover:bg-surface-subtle hover:text-white"
                 ].join(" ")
@@ -97,12 +148,21 @@ export default function App() {
 
       <main className="flex flex-col">
         <header className="flex items-center justify-between border-b border-surface-subtle bg-surface/80 px-6 py-4 backdrop-blur">
-          <div>
+          <div className="min-w-0">
             <p className="text-xs uppercase tracking-widest text-slate-400">
               {siteSettings.headerNote}
             </p>
+            {!isAuthenticated ? (
+              <h2 className="text-lg font-semibold text-white">
+                {siteSettings.headerGreeting}
+              </h2>
+            ) : null}
+          </div>
+          <div className="flex-1 text-center">
             <h2 className="text-lg font-semibold text-white">
-              {siteSettings.headerGreeting}
+              {isAuthenticated && username
+                ? `Welcome back, ${username}`
+                : siteSettings.headerGreeting}
             </h2>
           </div>
           <div className="flex items-center gap-6">
@@ -129,7 +189,11 @@ export default function App() {
               <div>
                 <p className="text-sm font-medium text-white">Avery Stone</p>
                 <p className="text-xs text-slate-400">
-                  {isAuthenticated ? "Staff" : "Guest"}
+                  {isAuthenticated
+                    ? role === "owner"
+                      ? "Owner"
+                      : "Moderator"
+                    : "Guest"}
                 </p>
               </div>
             </div>
@@ -142,7 +206,7 @@ export default function App() {
               path="/"
               element={
                 <Navigate
-                  to={isAuthenticated ? "/overview" : "/staff"}
+                  to={landingRoute}
                   replace
                 />
               }
@@ -150,7 +214,7 @@ export default function App() {
             <Route
               path="/overview"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={["owner"]}>
                   <Dashboard />
                 </ProtectedRoute>
               }
@@ -158,7 +222,7 @@ export default function App() {
             <Route
               path="/tickets"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={["owner", "moderator"]}>
                   <TicketsPage />
                 </ProtectedRoute>
               }
@@ -166,7 +230,7 @@ export default function App() {
             <Route
               path="/analytics"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={["owner"]}>
                   <AnalyticsPage />
                 </ProtectedRoute>
               }
@@ -199,10 +263,20 @@ export default function App() {
   );
 }
 
-function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { isAuthenticated } = useStaffAuth();
+function ProtectedRoute({
+  children,
+  allowedRoles
+}: {
+  children: ReactNode;
+  allowedRoles?: StaffRole[];
+}) {
+  const { isAuthenticated, role } = useStaffAuth();
 
   if (!isAuthenticated) {
+    return <Navigate to="/staff" replace />;
+  }
+
+  if (allowedRoles && (!role || !allowedRoles.includes(role))) {
     return <Navigate to="/staff" replace />;
   }
 

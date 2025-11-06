@@ -104,7 +104,32 @@ export async function registerStaffRoutes(app: FastifyInstance) {
         "Provide theme and/or site settings to update."
       );
 
-    const parsed = payloadSchema.parse(request.body ?? {});
+    const rawBody = request.body ?? {};
+    let normalizedBody: unknown = rawBody;
+
+    if (typeof rawBody === "string" || Buffer.isBuffer(rawBody)) {
+      const textBody = Buffer.isBuffer(rawBody)
+        ? rawBody.toString("utf8")
+        : (rawBody as string);
+      try {
+        normalizedBody = textBody.length ? JSON.parse(textBody) : {};
+      } catch (error) {
+        request.log.warn({ error }, "Invalid JSON body for staff settings update.");
+        throw app.httpErrors.badRequest("Malformed JSON payload.");
+      }
+    }
+
+    const parsedResult = payloadSchema.safeParse(normalizedBody);
+
+    if (!parsedResult.success) {
+      request.log.warn(
+        { issues: parsedResult.error.issues },
+        "Validation failed for staff settings update."
+      );
+      throw app.httpErrors.badRequest("Invalid staff settings payload.");
+    }
+
+    const parsed = parsedResult.data;
 
     const current = await getOrCreateSettings(app);
 
