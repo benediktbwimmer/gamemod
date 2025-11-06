@@ -8,20 +8,35 @@ const TICKET_STATUSES = ["open", "in_progress", "resolved", "closed"] as const;
 type TicketStatus = (typeof TICKET_STATUSES)[number];
 
 const createTicketSchema = z.object({
-  title: z.string().min(1, "Title is required"),
-  body: z.string().min(1, "Body is required"),
-  playerId: z.string().min(1, "Player identifier is required"),
-  topicId: z.string().uuid("Topic id must be a UUID"),
-  organizationId: z.string().uuid().optional()
+  title: z.string().trim().min(1, "Title is required"),
+  body: z.string().trim().min(1, "Body is required"),
+  playerId: z.string().trim().min(1, "Player identifier is required"),
+  topicId: z
+    .string()
+    .trim()
+    .min(1, "Topic id is required"),
+  organizationId: z
+    .string()
+    .trim()
+    .min(1, "Organization id cannot be empty")
+    .optional()
 });
 
 const updateTicketSchema = z
   .object({
-    title: z.string().min(1).optional(),
-    body: z.string().min(1).optional(),
+    title: z.string().trim().min(1).optional(),
+    body: z.string().trim().min(1).optional(),
     status: z.enum(TICKET_STATUSES).optional(),
-    topicId: z.string().uuid("Topic id must be a UUID").optional(),
-    organizationId: z.string().uuid().optional()
+    topicId: z
+      .string()
+      .trim()
+      .min(1, "Topic id is required")
+      .optional(),
+    organizationId: z
+      .string()
+      .trim()
+      .min(1, "Organization id cannot be empty")
+      .optional()
   })
   .refine(
     (data) => Object.keys(data).length > 0,

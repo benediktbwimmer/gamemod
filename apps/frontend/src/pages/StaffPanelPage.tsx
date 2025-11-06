@@ -7,19 +7,34 @@ import { AdminThemeDesigner } from "@/components/AdminThemeDesigner";
 import { useStaffSettingsQuery } from "@/hooks/useStaffSettings";
 import { useCreateTopicMutation, useTopicsQuery } from "@/hooks/useTopics";
 import { formatTimestamp } from "@/lib/format";
-import { useStaffAuth } from "@/lib/staffAuth";
+import { useStaffAuth, type StaffRole } from "@/lib/staffAuth";
 import { defaultStaffSiteSettings } from "@/lib/staffSettings";
 
-const STAFF_USERS = [
+type StaffUser = {
+  username: string;
+  password: string;
+  adminKey: string | null;
+  role: StaffRole;
+};
+
+const CHANNEL_OPTIONS = [
+  { id: "support-queue", label: "#support-queue" },
+  { id: "mod-log", label: "#mod-log" },
+  { id: "announcements", label: "#announcements" }
+] as const;
+
+const STAFF_USERS: readonly StaffUser[] = [
   {
     username: "SquishyFoxy",
     password: "1337",
-    adminKey: "1337"
+    adminKey: "1337",
+    role: "owner"
   },
   {
     username: "Mod1337",
     password: "1337",
-    adminKey: "1337"
+    adminKey: null,
+    role: "moderator"
   }
 ] as const;
 
@@ -27,13 +42,20 @@ export function StaffPanelPage() {
   const topicsQuery = useTopicsQuery();
   const createTopic = useCreateTopicMutation();
   const { data: staffSettings } = useStaffSettingsQuery();
-  const { isAuthenticated, adminKey, login, logout } = useStaffAuth();
+  const { isAuthenticated, adminKey, login, logout, role, username } =
+    useStaffAuth();
 
   const [usernameInput, setUsernameInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [botToken, setBotToken] = useState("");
+  const [botChannelId, setBotChannelId] = useState<typeof CHANNEL_OPTIONS[number]["id"]>(
+    CHANNEL_OPTIONS[0]?.id ?? ""
+  );
+  const [botCommand, setBotCommand] = useState("");
+  const [botCommandResult, setBotCommandResult] = useState<string | null>(null);
 
   const navigate = useNavigate();
 
@@ -59,7 +81,11 @@ export function StaffPanelPage() {
       return;
     }
 
-    login({ username: matchingUser.username, adminKey: matchingUser.adminKey });
+    login({
+      username: matchingUser.username,
+      adminKey: matchingUser.adminKey,
+      role: matchingUser.role
+    });
 
     setUsernameInput("");
     setPasswordInput("");
@@ -109,6 +135,24 @@ export function StaffPanelPage() {
     );
   };
 
+  const handleRunBotCommand = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!botToken.trim()) {
+      setBotCommandResult("Provide a bot token before executing commands.");
+      return;
+    }
+
+    if (!botCommand.trim()) {
+      setBotCommandResult("Add a command to run.");
+      return;
+    }
+
+    setBotCommandResult(
+      `Queued command "${botCommand.trim()}" for channel ${botChannelId}.`
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -132,7 +176,13 @@ export function StaffPanelPage() {
 
         {isAuthenticated ? (
           <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-            Staff tools unlocked.
+            <span>
+              Staff tools unlocked for{" "}
+              <span className="font-semibold text-emerald-100">
+                {username ?? "staff"}
+              </span>{" "}
+              ({role === "owner" ? "Owner" : "Moderator"} access).
+            </span>
             <button
               type="button"
               onClick={() => {
@@ -176,110 +226,190 @@ export function StaffPanelPage() {
       </section>
 
       {isAuthenticated ? (
-        <>
-          <div className="space-y-6">
-            <AdminThemeDesigner />
-            <AdminSiteCustomizer />
-          </div>
-
-          <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <div className="rounded-2xl border border-surface-subtle bg-surface/80 p-6">
-              <h2 className="text-lg font-semibold text-white">Create Topic</h2>
-              <p className="text-sm text-slate-400">
-                Make quick adjustments as your moderation queues evolve.
-              </p>
-
-              <form onSubmit={handleCreateTopic} className="mt-4 space-y-4">
-                <label className="block text-sm">
-                  <span className="text-slate-300">Topic name</span>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-surface-subtle bg-surface-muted/40 px-3 py-2 text-sm text-white outline-none focus:border-primary"
-                    placeholder="e.g. Billing or Matchmaking"
-                  />
-                </label>
-
-                <label className="block text-sm">
-                  <span className="text-slate-300">Description</span>
-                  <textarea
-                    value={description}
-                    onChange={(event) => setDescription(event.target.value)}
-                    rows={3}
-                    className="mt-1 w-full rounded-lg border border-surface-subtle bg-surface-muted/40 px-3 py-2 text-sm text-white outline-none focus:border-primary"
-                    placeholder="Short summary of when to use this topic"
-                  />
-                </label>
-
-                <button
-                  type="submit"
-                  disabled={createTopic.isPending}
-                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                >
-                  {createTopic.isPending ? "Saving…" : "Save Topic"}
-                </button>
-
-                {createTopic.isSuccess ? (
-                  <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
-                    Topic created successfully.
-                  </div>
-                ) : null}
-              </form>
-            </div>
-
-            {siteSettings.showTopicsPanel ? (
-              <div className="rounded-2xl border border-surface-subtle bg-surface/80 p-6">
-                <h2 className="text-lg font-semibold text-white">Existing Topics</h2>
+        role === "owner" ? (
+          <>
+            <div className="space-y-6">
+              <AdminThemeDesigner />
+              <AdminSiteCustomizer />
+              <section className="rounded-2xl border border-surface-subtle bg-surface/80 p-6">
+                <h2 className="text-lg font-semibold text-white">Discord Bot</h2>
                 <p className="text-sm text-slate-400">
-                  These are visible to players when they submit new tickets.
+                  Connect the community bot and queue moderation commands from the control
+                  surface. Commands execute against the selected channel once the bot
+                  integration is live.
                 </p>
 
-                <div className="mt-4 space-y-3">
-                  {topicsQuery.isLoading ? (
-                    <div className="h-24 animate-pulse rounded-xl border border-surface-muted/40 bg-surface-muted/20" />
-                  ) : topicsQuery.error ? (
-                    <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-                      Unable to load topics.
-                    </div>
-                  ) : topicsQuery.data?.topics.length ? (
-                    topicsQuery.data.topics.map((topic) => (
-                      <div
-                        key={topic.id}
-                        className="rounded-xl border border-surface-muted/40 bg-surface-muted/30 px-4 py-3 text-sm text-slate-200"
+                <form onSubmit={handleRunBotCommand} className="mt-4 space-y-4">
+                  <label className="block text-sm">
+                    <span className="text-slate-300">Bot Token</span>
+                    <input
+                      type="password"
+                      value={botToken}
+                      onChange={(event) => setBotToken(event.target.value)}
+                      className="mt-1 w-full rounded-lg border border-surface-subtle bg-surface-muted/40 px-3 py-2 text-sm text-white outline-none focus:border-primary"
+                      placeholder="Paste the Discord bot token"
+                    />
+                    <span className="mt-1 block text-xs text-slate-500">
+                      The token stores locally for this session; server-side persistence will
+                      be wired in the upcoming bot integration.
+                    </span>
+                  </label>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="block text-sm">
+                      <span className="text-slate-300">Run Command</span>
+                      <textarea
+                        value={botCommand}
+                        onChange={(event) => setBotCommand(event.target.value)}
+                        rows={3}
+                        className="mt-1 w-full rounded-lg border border-surface-subtle bg-surface-muted/40 px-3 py-2 text-sm text-white outline-none focus:border-primary"
+                        placeholder="/warn @player excessive spam"
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      <span className="text-slate-300">Target Channel</span>
+                      <select
+                        value={botChannelId}
+                        onChange={(event) =>
+                          setBotChannelId(event.target.value as typeof CHANNEL_OPTIONS[number]["id"])
+                        }
+                        className="mt-1 w-full rounded-lg border border-surface-subtle bg-surface-muted/40 px-3 py-2 text-sm text-white outline-none focus:border-primary"
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-white">{topic.name}</span>
-                          <span className="text-xs text-slate-400">
-                            {formatTimestamp(topic.updatedAt)}
-                          </span>
-                        </div>
-                        {topic.description ? (
-                          <p className="mt-1 text-xs text-slate-400">
-                            {topic.description}
-                          </p>
-                        ) : null}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-xl border border-surface-muted/40 bg-surface-muted/30 px-4 py-3 text-sm text-slate-300">
-                      No topics yet. Create one to enable ticket routing.
+                        {CHANNEL_OPTIONS.map((channel) => (
+                          <option key={channel.id} value={channel.id}>
+                            {channel.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  {botCommandResult ? (
+                    <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                      {botCommandResult}
                     </div>
-                  )}
-                </div>
+                  ) : null}
+
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+                    >
+                      Run Command
+                    </button>
+                  </div>
+                </form>
+              </section>
+            </div>
+
+            <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="rounded-2xl border border-surface-subtle bg-surface/80 p-6">
+                <h2 className="text-lg font-semibold text-white">Create Topic</h2>
+                <p className="text-sm text-slate-400">
+                  Make quick adjustments as your moderation queues evolve.
+                </p>
+
+                <form onSubmit={handleCreateTopic} className="mt-4 space-y-4">
+                  <label className="block text-sm">
+                    <span className="text-slate-300">Topic name</span>
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      className="mt-1 w-full rounded-lg border border-surface-subtle bg-surface-muted/40 px-3 py-2 text-sm text-white outline-none focus:border-primary"
+                      placeholder="e.g. Billing or Matchmaking"
+                    />
+                  </label>
+
+                  <label className="block text-sm">
+                    <span className="text-slate-300">Description</span>
+                    <textarea
+                      value={description}
+                      onChange={(event) => setDescription(event.target.value)}
+                      rows={3}
+                      className="mt-1 w-full rounded-lg border border-surface-subtle bg-surface-muted/40 px-3 py-2 text-sm text-white outline-none focus:border-primary"
+                      placeholder="Short summary of when to use this topic"
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    disabled={createTopic.isPending}
+                    className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                  >
+                    {createTopic.isPending ? "Saving…" : "Save Topic"}
+                  </button>
+
+                  {createTopic.isSuccess ? (
+                    <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                      Topic created successfully.
+                    </div>
+                  ) : null}
+                </form>
               </div>
-            ) : null}
+
+              {siteSettings.showTopicsPanel ? (
+                <div className="rounded-2xl border border-surface-subtle bg-surface/80 p-6">
+                  <h2 className="text-lg font-semibold text-white">Existing Topics</h2>
+                  <p className="text-sm text-slate-400">
+                    These are visible to players when they submit new tickets.
+                  </p>
+
+                  <div className="mt-4 space-y-3">
+                    {topicsQuery.isLoading ? (
+                      <div className="h-24 animate-pulse rounded-xl border border-surface-muted/40 bg-surface-muted/20" />
+                    ) : topicsQuery.error ? (
+                      <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+                        Unable to load topics.
+                      </div>
+                    ) : topicsQuery.data?.topics.length ? (
+                      topicsQuery.data.topics.map((topic) => (
+                        <div
+                          key={topic.id}
+                          className="rounded-xl border border-surface-muted/40 bg-surface-muted/30 px-4 py-3 text-sm text-slate-200"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-white">
+                              {topic.name}
+                            </span>
+                            <span className="text-xs text-slate-400">
+                              {formatTimestamp(topic.updatedAt)}
+                            </span>
+                          </div>
+                          {topic.description ? (
+                            <p className="mt-1 text-xs text-slate-400">
+                              {topic.description}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-xl border border-surface-muted/40 bg-surface-muted/30 px-4 py-3 text-sm text-slate-300">
+                        No topics yet. Create one to enable ticket routing.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          </>
+        ) : (
+          <section className="rounded-2xl border border-surface-subtle bg-surface/80 p-6 text-sm text-slate-300">
+            <h2 className="text-lg font-semibold text-white">Moderator tools</h2>
+            <p className="mt-2 text-slate-400">
+              You have access to the Tickets workspace to triage and resolve cases. Owner
+              level configuration, theming, and topic management remain locked.
+            </p>
           </section>
-        </>
+        )
       ) : (
         <section className="rounded-2xl border border-dashed border-surface-subtle bg-surface/60 p-10 text-center text-slate-400">
           <h3 className="text-lg font-semibold text-white">
             Staff tools are locked
           </h3>
           <p className="mt-2 text-sm">
-            Provide the staff credentials above to reveal theme controls and topic
-            management. Overview, Tickets, and Analytics become available via the sidebar
-            once authenticated.
+            Provide the staff credentials above to unlock moderation tooling. Available
+            sections in the sidebar adjust automatically based on your assigned role.
           </p>
         </section>
       )}
